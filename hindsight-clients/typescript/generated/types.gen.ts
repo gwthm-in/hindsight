@@ -8191,10 +8191,6 @@ export type GetBankProfileData = {
 
 export type GetBankProfileErrors = {
   /**
-   * The bank does not exist.
-   */
-  404: unknown;
-  /**
    * Validation Error
    */
   422: HttpValidationError;

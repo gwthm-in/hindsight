@@ -7298,7 +7298,6 @@ def _register_routes(app: FastAPI):
         operation_id="get_bank_profile",
         tags=["Banks"],
         deprecated=True,
-        responses=_BANK_NOT_FOUND_RESPONSES,
     )
     async def api_get_bank_profile(bank_id: str, request_context: RequestContext = Depends(get_request_context)):
         """Removed bank-profile read — always 410, pointing at the bank config API."""
