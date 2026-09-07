@@ -127,70 +127,26 @@ resolve_api_startup_wait_seconds() {
 # =============================================================================
 # HTTP readiness probe
 #
-# Replaces `curl -sf`, so that curl - which nothing else in these images uses -
-# does not have to ship in the runtime layers. Every image that probes anything
-# is Python-based, so python3 is always present; there is deliberately no wget
-# fallback, because BusyBox wget cannot reproduce the semantics below (it has no
-# --max-redirect and always follows).
+# The implementation is hindsight_api.http_probe, not Python embedded here: it
+# needs to be linted, type-checked and unit-tested, and the parity rules it
+# encodes (notably that `curl -sf` does NOT follow redirects) are too easy to
+# get subtly wrong to leave in a shell string. See that module's docstring.
 #
-# The semantics are curl -sf WITHOUT -L, which is what this replaced:
-#   - 2xx and 3xx succeed. curl does not follow redirects unless asked, so a
-#     302 is a completed transfer, not a failure. Following it instead would
-#     turn a healthy service that redirects into "not ready".
-#   - >= 400 fails, as -f does.
-#   - connection/DNS/timeout errors fail.
-# Exit codes are only ever tested for zero/non-zero, so curl's distinct codes
-# (22, 7, ...) are not reproduced.
-#
-# One deliberate difference: curl was called with --connect-timeout, which caps
-# only the connection phase (and the API health loop passed no timeout at all),
-# so a server that accepted a connection and then never answered would hang the
-# probe forever. The timeout here covers the whole request.
+# Every image that probes anything ships the API package, so `python3 -m` finds
+# it. cp-only has neither and probes nothing.
+# =============================================================================
 http_probe() {
     local url="$1"
     local timeout_seconds="${2:-5}"
 
-    HTTP_PROBE_URL="$url" HTTP_PROBE_TIMEOUT="$timeout_seconds" python3 -c "
-import base64, os, sys
-import http.client
-from urllib.parse import urlsplit, unquote
-
-parts = urlsplit(os.environ[\"HTTP_PROBE_URL\"])
-timeout = float(os.environ[\"HTTP_PROBE_TIMEOUT\"])
-
-if parts.scheme == \"https\":
-    conn = http.client.HTTPSConnection(parts.hostname, parts.port, timeout=timeout)
-elif parts.scheme == \"http\":
-    conn = http.client.HTTPConnection(parts.hostname, parts.port, timeout=timeout)
-else:
-    sys.exit(1)
-
-path = parts.path or \"/\"
-if parts.query:
-    path += \"?\" + parts.query
-
-headers = {}
-if parts.username is not None:
-    raw = unquote(parts.username) + \":\" + unquote(parts.password or \"\")
-    headers[\"Authorization\"] = \"Basic \" + base64.b64encode(raw.encode()).decode()
-
-try:
-    conn.request(\"GET\", path, headers=headers)
-    status = conn.getresponse().status
-except Exception:
-    sys.exit(1)
-finally:
-    conn.close()
-
-sys.exit(0 if status < 400 else 1)
-"
+    python3 -m hindsight_api.http_probe "$url" "$timeout_seconds"
 }
 
-# Probing without python3 would silently degrade into "never ready", so check
-# once, up front, where it can still say why.
+# A probe that cannot run at all would silently degrade into "never ready", so
+# check once, up front, where it can still say why.
 require_http_probe_runtime() {
-    if ! command -v python3 >/dev/null 2>&1; then
-        echo "❌ python3 is required for HTTP readiness probes but is not on PATH."
+    if ! python3 -c "import hindsight_api.http_probe" >/dev/null 2>&1; then
+        echo "❌ HTTP readiness probes need python3 with hindsight_api importable."
         exit 1
     fi
 }
