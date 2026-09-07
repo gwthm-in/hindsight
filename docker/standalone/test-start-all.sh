@@ -8,7 +8,17 @@ source "$SCRIPT_DIR/start-all.sh"
 unset HINDSIGHT_START_ALL_SOURCE_ONLY
 
 TMP_DIR="$(mktemp -d)"
-trap 'chmod -R u+rwx "$TMP_DIR" 2>/dev/null || true; rm -rf "$TMP_DIR"' EXIT
+HTTP_SERVER_PID=""
+
+cleanup() {
+    if [ -n "$HTTP_SERVER_PID" ]; then
+        kill "$HTTP_SERVER_PID" 2>/dev/null || true
+        wait "$HTTP_SERVER_PID" 2>/dev/null || true
+    fi
+    chmod -R u+rwx "$TMP_DIR" 2>/dev/null || true
+    rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT
 
 assert_contains() {
     local output="$1"
@@ -43,6 +53,100 @@ assert_empty() {
         exit 1
     fi
 }
+
+# =============================================================================
+# http_probe
+#
+# The contract is `curl -sf` without -L, which this replaced. The redirect
+# cases are the ones that matter: curl does not follow redirects unless asked,
+# so a 302 is a completed transfer and succeeds no matter what it points at.
+# A probe that followed them would report a healthy service as "not ready".
+#
+# The server runs until the trap kills it - it is deliberately not a
+# "handle N requests" loop, because then adding a test case here would make the
+# script block forever on the request the server had stopped waiting for.
+# =============================================================================
+HTTP_PORT_FILE="$TMP_DIR/http-port"
+
+python3 - "$HTTP_PORT_FILE" <<'PY' &
+import http.server
+import pathlib
+import sys
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/ok":
+            self.send_response(204)
+        elif self.path == "/redirect-to-ok":
+            self.send_response(302)
+            self.send_header("Location", "/ok")
+        elif self.path == "/redirect-to-missing":
+            self.send_response(302)
+            self.send_header("Location", "/missing")
+        elif self.path == "/500":
+            self.send_response(500)
+        else:
+            self.send_response(404)
+        self.end_headers()
+
+    def log_message(self, *_args):
+        pass
+
+
+server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+pathlib.Path(sys.argv[1]).write_text(str(server.server_port), encoding="ascii")
+server.serve_forever()
+PY
+HTTP_SERVER_PID=$!
+
+for _ in $(seq 1 50); do
+    [ -s "$HTTP_PORT_FILE" ] && break
+    sleep 0.1
+done
+if [ ! -s "$HTTP_PORT_FILE" ]; then
+    echo "HTTP probe test server did not start"
+    exit 1
+fi
+HTTP_TEST_URL="http://127.0.0.1:$(cat "$HTTP_PORT_FILE")"
+
+assert_probe_succeeds() {
+    if ! http_probe "$HTTP_TEST_URL$1" 5 >/dev/null 2>&1; then
+        echo "http_probe should succeed for $1 (curl -sf does)"
+        exit 1
+    fi
+}
+
+assert_probe_fails() {
+    if http_probe "$HTTP_TEST_URL$1" 5 >/dev/null 2>&1; then
+        echo "http_probe should fail for $1 (curl -sf does)"
+        exit 1
+    fi
+}
+
+assert_probe_succeeds "/ok"
+assert_probe_succeeds "/redirect-to-ok"
+# The regression this guards: urllib.request.urlopen follows the redirect and
+# raises on the 404 behind it, where curl -sf reports success.
+assert_probe_succeeds "/redirect-to-missing"
+assert_probe_fails "/missing"
+assert_probe_fails "/500"
+
+# Nothing listening: a connection error fails like curl's exit 7.
+CLOSED_PORT_URL="http://127.0.0.1:$(python3 -c '
+import socket
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+port = s.getsockname()[1]
+s.close()
+print(port)
+')/ok"
+if http_probe "$CLOSED_PORT_URL" 2 >/dev/null 2>&1; then
+    echo "http_probe should fail when nothing is listening"
+    exit 1
+fi
+
+echo "start-all HTTP probe checks passed"
 
 mkdir -p "$TMP_DIR/empty"
 assert_empty "$(check_pg0_data_integrity "$TMP_DIR/empty")"

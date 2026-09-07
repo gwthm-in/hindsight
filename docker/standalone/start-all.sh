@@ -124,6 +124,77 @@ resolve_api_startup_wait_seconds() {
     echo "$DEFAULT_API_STARTUP_WAIT_SECONDS"
 }
 
+# =============================================================================
+# HTTP readiness probe
+#
+# Replaces `curl -sf`, so that curl - which nothing else in these images uses -
+# does not have to ship in the runtime layers. Every image that probes anything
+# is Python-based, so python3 is always present; there is deliberately no wget
+# fallback, because BusyBox wget cannot reproduce the semantics below (it has no
+# --max-redirect and always follows).
+#
+# The semantics are curl -sf WITHOUT -L, which is what this replaced:
+#   - 2xx and 3xx succeed. curl does not follow redirects unless asked, so a
+#     302 is a completed transfer, not a failure. Following it instead would
+#     turn a healthy service that redirects into "not ready".
+#   - >= 400 fails, as -f does.
+#   - connection/DNS/timeout errors fail.
+# Exit codes are only ever tested for zero/non-zero, so curl's distinct codes
+# (22, 7, ...) are not reproduced.
+#
+# One deliberate difference: curl was called with --connect-timeout, which caps
+# only the connection phase (and the API health loop passed no timeout at all),
+# so a server that accepted a connection and then never answered would hang the
+# probe forever. The timeout here covers the whole request.
+http_probe() {
+    local url="$1"
+    local timeout_seconds="${2:-5}"
+
+    HTTP_PROBE_URL="$url" HTTP_PROBE_TIMEOUT="$timeout_seconds" python3 -c "
+import base64, os, sys
+import http.client
+from urllib.parse import urlsplit, unquote
+
+parts = urlsplit(os.environ[\"HTTP_PROBE_URL\"])
+timeout = float(os.environ[\"HTTP_PROBE_TIMEOUT\"])
+
+if parts.scheme == \"https\":
+    conn = http.client.HTTPSConnection(parts.hostname, parts.port, timeout=timeout)
+elif parts.scheme == \"http\":
+    conn = http.client.HTTPConnection(parts.hostname, parts.port, timeout=timeout)
+else:
+    sys.exit(1)
+
+path = parts.path or \"/\"
+if parts.query:
+    path += \"?\" + parts.query
+
+headers = {}
+if parts.username is not None:
+    raw = unquote(parts.username) + \":\" + unquote(parts.password or \"\")
+    headers[\"Authorization\"] = \"Basic \" + base64.b64encode(raw.encode()).decode()
+
+try:
+    conn.request(\"GET\", path, headers=headers)
+    status = conn.getresponse().status
+except Exception:
+    sys.exit(1)
+finally:
+    conn.close()
+
+sys.exit(0 if status < 400 else 1)
+"
+}
+
+# Probing without python3 would silently degrade into "never ready", so check
+# once, up front, where it can still say why.
+require_http_probe_runtime() {
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "❌ python3 is required for HTTP readiness probes but is not on PATH."
+        exit 1
+    fi
+}
+
 if [ "${HINDSIGHT_START_ALL_SOURCE_ONLY:-false}" = "true" ]; then
     return 0 2>/dev/null || exit 0
 fi
@@ -143,6 +214,7 @@ ENABLE_CP="${HINDSIGHT_ENABLE_CP:-true}"
 # This wait loop ensures dependencies are ready before starting.
 # =============================================================================
 if [ "${HINDSIGHT_WAIT_FOR_DEPS:-false}" = "true" ]; then
+    require_http_probe_runtime
     LLM_BASE_URL="${HINDSIGHT_API_LLM_BASE_URL:-http://host.docker.internal:1234/v1}"
     MAX_RETRIES="${HINDSIGHT_RETRY_MAX:-0}"  # 0 = infinite
     RETRY_INTERVAL="${HINDSIGHT_RETRY_INTERVAL:-10}"
@@ -167,7 +239,7 @@ if [ "${HINDSIGHT_WAIT_FOR_DEPS:-false}" = "true" ]; then
     }
 
     check_llm() {
-        curl -sf "${LLM_BASE_URL}/models" --connect-timeout 5 &>/dev/null
+        http_probe "${LLM_BASE_URL}/models" 5 &>/dev/null
     }
 
     echo "⏳ Waiting for dependencies to be ready..."
@@ -263,6 +335,7 @@ PIDS=()
 
 # Start API if enabled
 if [ "$ENABLE_API" = "true" ]; then
+    require_http_probe_runtime
     cd /app/api
     API_HEALTH_URL="${HINDSIGHT_API_HEALTH_URL:-http://localhost:${HINDSIGHT_API_PORT:-8888}/health}"
     API_STARTUP_WAIT_SECONDS="$(resolve_api_startup_wait_seconds)"
@@ -279,7 +352,7 @@ if [ "$ENABLE_API" = "true" ]; then
             wait "$API_PID"
             exit $?
         fi
-        if curl -sf "$API_HEALTH_URL" &>/dev/null; then
+        if http_probe "$API_HEALTH_URL" 5 &>/dev/null; then
             api_ready=true
             break
         fi
