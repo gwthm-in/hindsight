@@ -536,6 +536,27 @@ async def any_memory_updated_since(
     return row is not None
 
 
+async def latest_memory_write_at(
+    *,
+    conn,
+    fq_table: Callable[[str], str],
+    bank_id: str,
+) -> datetime | None:
+    """The newest ``updated_at`` across ``bank_id``'s memories, or None if it has none.
+
+    The bank-wide half of the staleness question, and the cheap one: ``MAX`` over
+    the leading column of ``idx_memory_units_bank_updated_at`` is a single backward
+    index probe, whatever the bank's size. A mental model that has read the
+    memories at or past this cannot be stale however its scope is drawn, which is
+    what lets the staleness surfaces skip the scoped scan entirely on a bank whose
+    writes have not moved since.
+    """
+    return await conn.fetchval(
+        f"SELECT MAX(updated_at) FROM {fq_table('memory_units')} WHERE bank_id = $1",
+        bank_id,
+    )
+
+
 async def any_memory_updated_since_batch(
     *,
     conn,
@@ -547,11 +568,9 @@ async def any_memory_updated_since_batch(
 
     The knowledge tree and the mental-model list ask this for every model in the
     bank on a poll, and one round-trip each is what made the exact answer look
-    expensive — the scans themselves are microseconds once
-    ``idx_memory_units_bank_updated_at`` exists. Scopes are grouped by the tag
-    clause they generate (a bank's pages almost always share one), each group is
-    joined against its scope set as JSON, and every group is a single prepared
-    plan however many pages it covers.
+    expensive. Scopes are grouped by the tag clause they generate (a bank's pages
+    almost always share one), each group is joined against its scope set as JSON,
+    and every group is a single prepared plan however many pages it covers.
 
     Two details in the SQL are load-bearing:
 
@@ -560,7 +579,14 @@ async def any_memory_updated_since_batch(
       estimates the ``LIMIT 1`` will be satisfied early, picks a sequential scan,
       and the whole point is lost (measured: 13 ms per scope instead of 0.03 ms).
       The ORDER BY makes the ``(bank_id, updated_at DESC)`` index the obvious way
-      to run the join, which is also the cheapest.
+      to run the join, which is also the cheapest **when the scope has a match**.
+      When it does not, that index is walked to the end: ``LIMIT 1`` can only stop
+      at a hit, so a scope whose own tags have been quiet rejects, one row at a
+      time, every memory written since its watermark (measured on a real bank:
+      247 ms for one scope over 123k rows, #4169). Callers therefore rule out what
+      they can against the bank-wide watermark before asking — see
+      ``MemoryEngine.compute_mental_models_are_stale`` — and what reaches here is
+      the set that genuinely has to be scoped.
     * ``LEFT JOIN LATERAL`` rather than a correlated ``EXISTS``. A scalar subquery
       over a function scan gets no useful row estimate and falls back to a
       sequential scan for the same reason.
@@ -705,6 +731,7 @@ __all__ = [
     "count_memories",
     "find_unconsolidated",
     "get_memories",
+    "latest_memory_write_at",
     "list_tags",
     "live_memory_ids",
     "mark_consolidated",

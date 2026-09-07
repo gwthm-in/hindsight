@@ -1627,6 +1627,92 @@ class TestMentalModelStaleness:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.memory_backend_incompatible
+    async def test_polling_surfaces_skip_the_scoped_scan_on_a_quiet_bank(self, memory: MemoryEngine, request_context):
+        """Every staleness surface resolves the watermark itself, not just reflect (#4169).
+
+        The scoped check is only cheap when the model *is* stale: it walks every
+        memory written since the model's watermark and can stop early only at a
+        match, so a model whose own tags have been quiet pays for the whole walk to
+        be told "no". The list and the single-model read used to pay that on every
+        poll; both now rule the model out against the bank's newest write first,
+        and only ask about what that cannot settle.
+        """
+        bank_id = f"test-mm-quiet-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        # Written first, so the model ends up refreshed *after* the newest write.
+        await self._insert_memory(memory, bank_id, tags=["user_a"])
+        model = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="quiet MM",
+            source_query="q",
+            content="quiet",
+            tags=["user_a"],
+            request_context=request_context,
+        )
+
+        from hindsight_api.engine.memories import get_memories
+
+        store = get_memories()
+        asked: list[str] = []
+        original_single = store.any_memory_updated_since
+        original_batch = store.any_memory_updated_since_batch
+
+        async def counting_single(*args, **kwargs):
+            asked.append("single")
+            return await original_single(*args, **kwargs)
+
+        async def counting_batch(*args, scopes, **kwargs):
+            asked.extend("batch" for _ in scopes)
+            return await original_batch(*args, scopes=scopes, **kwargs)
+
+        store.any_memory_updated_since = counting_single
+        store.any_memory_updated_since_batch = counting_batch
+        try:
+            listed = await memory.list_mental_models(
+                bank_id=bank_id, with_staleness=True, request_context=request_context
+            )
+            assert [m["is_stale"] for m in listed.items] == [False]
+            single = await memory.get_mental_model(bank_id, model["id"], request_context=request_context)
+            assert single["is_stale"] is False
+            assert asked == [], "nothing written since the model read: no scoped query from either surface"
+
+            # A write inside the scope moves the watermark past the model, and the
+            # scoped question is asked for real — the shortcut skips work, never
+            # the answer.
+            await self._insert_memory(memory, bank_id, tags=["user_a"])
+            listed = await memory.list_mental_models(
+                bank_id=bank_id, with_staleness=True, request_context=request_context
+            )
+            assert [m["is_stale"] for m in listed.items] == [True]
+            single = await memory.get_mental_model(bank_id, model["id"], request_context=request_context)
+            assert single["is_stale"] is True
+            assert asked == ["batch", "single"]
+
+            # A write outside the scope moves the watermark too, so the shortcut
+            # cannot settle it — and the scoped answer is still "not stale".
+            # Stamp the model current directly: a real refresh would need an LLM,
+            # and what is under test is the query it is asked, not its content.
+            pool = await memory._get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    f"UPDATE {fq_table('mental_models')} SET last_memory_seen_at = now() "
+                    f"WHERE bank_id = $1 AND id = $2",
+                    bank_id,
+                    model["id"],
+                )
+            asked.clear()
+            await self._insert_memory(memory, bank_id, tags=["user_b"])
+            listed = await memory.list_mental_models(
+                bank_id=bank_id, with_staleness=True, request_context=request_context
+            )
+            assert [m["is_stale"] for m in listed.items] == [False]
+            assert asked == ["batch"], "behind the watermark, out of scope: asked, and answered fresh"
+        finally:
+            store.any_memory_updated_since = original_single
+            store.any_memory_updated_since_batch = original_batch
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.memory_backend_incompatible
     async def test_tool_search_mental_models_skips_the_scan_below_the_watermark(
         self, memory: MemoryEngine, request_context
     ):
