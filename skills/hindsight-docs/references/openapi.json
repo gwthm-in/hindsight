@@ -267,6 +267,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -479,6 +482,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -1058,6 +1064,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -1198,6 +1207,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -1283,6 +1295,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -1366,6 +1381,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -1640,6 +1658,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -2262,6 +2283,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -2459,6 +2483,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -2543,6 +2570,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -2885,6 +2915,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -3292,6 +3325,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -3785,6 +3821,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -3977,6 +4016,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -4319,6 +4361,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -4780,6 +4825,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -5312,6 +5360,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -5497,6 +5548,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -5850,6 +5904,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -6465,6 +6522,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -6553,6 +6613,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",
@@ -6814,6 +6877,9 @@
               }
             }
           },
+          "404": {
+            "description": "The bank does not exist."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -6902,6 +6968,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The bank does not exist."
           },
           "422": {
             "description": "Validation Error",

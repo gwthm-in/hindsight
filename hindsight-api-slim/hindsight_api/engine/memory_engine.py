@@ -10418,6 +10418,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.LIST_OBSERVATION_SCOPES, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        await self._require_bank_exists(bank_id)
         backend = await self._get_backend()
         from .memories import get_memories
 
@@ -11193,6 +11194,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.GET_GRAPH_DATA, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        await self._require_bank_exists(bank_id)
         from .memories import get_memories
 
         store = get_memories()
@@ -11629,6 +11631,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.LIST_MEMORY_UNITS, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        await self._require_bank_exists(bank_id)
         from .memories import get_memories
 
         backend = await self._get_backend()
@@ -11737,6 +11740,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.LIST_DOCUMENTS, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        await self._require_bank_exists(bank_id)
 
         # A store that owns its document metadata keeps no rows in the SQL `documents` table, so the
         # query below would return an empty page for it. List from the store's own registry instead.
@@ -12853,6 +12857,26 @@ class MemoryEngine(MemoryEngineInterface):
             "mission": resolved.mission,
         }
 
+    async def _require_bank_exists(self, bank_id: str) -> None:
+        """Raise a 404 when a bank-scoped read targets a bank that was never created.
+
+        Read endpoints must not answer for a bank nobody created. A 200 with
+        empty counters is indistinguishable from a healthy, empty bank, so a
+        typo'd, renamed or deleted ``bank_id`` silently passes any monitor built
+        on ``/stats`` or ``/memories/list`` (#4175). Callers invoke this after
+        their own authentication and read authorization, so the check neither
+        widens what a request is allowed to see nor creates the bank.
+
+        The profile row is cached per process (see ``bank_info_cache``), so on an
+        existing bank this costs no query; a missing bank is never cached, so it
+        stays one cheap read.
+        """
+        backend = await self._get_backend()
+        if await bank_utils.get_bank_profile_if_exists(backend, bank_id) is None:
+            from hindsight_api.extensions import OperationValidationError
+
+            raise OperationValidationError(f"Bank '{bank_id}' not found", status_code=404)
+
     async def _ensure_bank_exists(
         self,
         bank_id: str,
@@ -12983,6 +13007,7 @@ class MemoryEngine(MemoryEngineInterface):
                 request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(context))
+        await self._require_bank_exists(bank_id)
         return await self._get_bank_config_authenticated(bank_id, request_context)
 
     async def update_bank_config(
@@ -14217,6 +14242,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.LIST_ENTITIES, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        await self._require_bank_exists(bank_id)
         from .memories import get_memories
 
         backend = await self._get_backend()
@@ -14254,6 +14280,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.GET_ENTITY_GRAPH, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        await self._require_bank_exists(bank_id)
 
         # A store that owns its entities keeps no rows in the SQL entity_cooccurrences/entities
         # tables, so the query below would return an empty graph. Read the store's own aggregate.
@@ -14419,6 +14446,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.LIST_TAGS, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        await self._require_bank_exists(bank_id)
         # Tags live with the memories, so the store owns the histogram and applies
         # the wildcard filter, ordering (count desc, tag asc) and paging — on the
         # SQL stores that is one paged query, never the whole histogram over the wire.
@@ -14455,6 +14483,7 @@ class MemoryEngine(MemoryEngineInterface):
                 request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        await self._require_bank_exists(bank_id)
         return await self._list_tags_from_table(
             table="mental_models",
             bank_id=bank_id,
@@ -14591,6 +14620,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.GET_BANK_STATS, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        await self._require_bank_exists(bank_id)
 
         return await self._cached_bank_stats(bank_id, force_refresh=force_refresh)
 
@@ -14845,6 +14875,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.GET_MEMORIES_TIMESERIES, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        await self._require_bank_exists(bank_id)
 
         cfg = _MEMORIES_TIMESERIES_PERIODS.get(period) or _MEMORIES_TIMESERIES_PERIODS["7d"]
         if period not in _MEMORIES_TIMESERIES_PERIODS:
@@ -15049,6 +15080,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.LIST_MENTAL_MODELS, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        await self._require_bank_exists(bank_id)
         backend = await self._get_backend()
 
         async with acquire_with_retry(backend) as conn:
@@ -17807,6 +17839,7 @@ class MemoryEngine(MemoryEngineInterface):
                 request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        await self._require_bank_exists(bank_id)
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             rows = await conn.fetch(
@@ -17926,6 +17959,7 @@ class MemoryEngine(MemoryEngineInterface):
                 request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        await self._require_bank_exists(bank_id)
         query = (query or "").strip()
         if not query:
             return []
@@ -18377,6 +18411,7 @@ class MemoryEngine(MemoryEngineInterface):
                 request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        await self._require_bank_exists(bank_id)
 
         with _authorize_nested_operations():
             nodes = await self.list_knowledge_nodes(bank_id=bank_id, request_context=request_context)
@@ -18741,6 +18776,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.LIST_DIRECTIVES, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        await self._require_bank_exists(bank_id)
         backend = await self._get_backend()
 
         async with acquire_with_retry(backend) as conn:
@@ -19094,6 +19130,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.LIST_OPERATIONS, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        await self._require_bank_exists(bank_id)
         backend = await self._get_backend()
 
         async with acquire_with_retry(backend) as conn:
@@ -19839,6 +19876,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.LIST_WEBHOOKS, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        await self._require_bank_exists(bank_id)
 
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
