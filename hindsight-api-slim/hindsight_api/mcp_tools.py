@@ -1378,7 +1378,6 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
         @mcp.tool(annotations=_tool_annotations("list_mental_models"))
         async def list_mental_models(
             tags: list[str] | None = None,
-            detail: str = "full",
             limit: int = 100,
             offset: int = 0,
             bank_id: str | None = None,
@@ -1386,13 +1385,15 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
             """
             List mental models (pinned reflections) for a memory bank.
 
+            Returns metadata only (id, name, tags, staleness). To read a model's
+            synthesized content, call get_mental_model with the id from this list.
+
             Mental models are living documents that stay current by periodically re-running
             a source query through reflect. Use them to maintain up-to-date summaries,
             preferences, or synthesized knowledge.
 
             Args:
                 tags: Optional tags to filter by (returns models matching any tag)
-                detail: Detail level - 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response). Default: 'full'
                 limit: Maximum number of results (default: 100)
                 offset: Pagination offset (default: 0). Page until the returned items add up to 'total'.
                 bank_id: Optional bank to list from (defaults to session bank). Use for cross-bank operations.
@@ -1402,12 +1403,16 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
                 if target_bank is None:
                     return '{"error": "No bank_id configured", "items": []}'
 
+                # Metadata only — listing never returns content. One list must
+                # not hand back a whole bank's synthesized content in bulk;
+                # agents read a specific model's content with get_mental_model.
                 page = await memory.list_mental_models(
                     bank_id=target_bank,
                     tags=tags,
-                    detail=detail,
+                    detail="metadata",
                     limit=limit,
                     offset=offset,
+                    with_staleness=True,
                     request_context=_get_request_context(config),
                 )
                 return json.dumps({"items": page.items, "total": page.total}, indent=2, default=str)
@@ -1423,12 +1428,14 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
         @mcp.tool(annotations=_tool_annotations("list_mental_models"))
         async def list_mental_models(
             tags: list[str] | None = None,
-            detail: str = "full",
             limit: int = 100,
             offset: int = 0,
         ) -> dict:
             """
             List mental models (pinned reflections) for this memory bank.
+
+            Returns metadata only (id, name, tags, staleness). To read a model's
+            synthesized content, call get_mental_model with the id from this list.
 
             Mental models are living documents that stay current by periodically re-running
             a source query through reflect. Use them to maintain up-to-date summaries,
@@ -1436,7 +1443,6 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
 
             Args:
                 tags: Optional tags to filter by (returns models matching any tag)
-                detail: Detail level - 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response). Default: 'full'
                 limit: Maximum number of results (default: 100)
                 offset: Pagination offset (default: 0). Page until the returned items add up to 'total'.
             """
@@ -1445,12 +1451,16 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
                 if target_bank is None:
                     return {"error": "No bank_id configured", "items": []}
 
+                # Metadata only — listing never returns content. One list must
+                # not hand back a whole bank's synthesized content in bulk;
+                # agents read a specific model's content with get_mental_model.
                 page = await memory.list_mental_models(
                     bank_id=target_bank,
                     tags=tags,
-                    detail=detail,
+                    detail="metadata",
                     limit=limit,
                     offset=offset,
+                    with_staleness=True,
                     request_context=_get_request_context(config),
                 )
                 return {"items": page.items, "total": page.total}

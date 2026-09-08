@@ -10,7 +10,7 @@
       "name": "Apache 2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
     },
-    "version": "0.9.1"
+    "version": "0.9.2"
   },
   "paths": {
     "/health": {
@@ -1584,11 +1584,11 @@
                 "full"
               ],
               "type": "string",
-              "description": "Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)",
-              "default": "full",
+              "description": "Detail level: 'metadata' (names/tags/staleness \u2014 the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.",
+              "default": "metadata",
               "title": "Detail"
             },
-            "description": "Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)"
+            "description": "Detail level: 'metadata' (names/tags/staleness \u2014 the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested."
           },
           {
             "name": "limit",
