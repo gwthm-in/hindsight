@@ -31,6 +31,7 @@ jobs:
       hindsight-all: ${{ steps.filter.outputs.hindsight-all }}
       integration-tests: ${{ steps.filter.outputs.integration-tests }}
       system-tests: ${{ steps.filter.outputs.system-tests }}
+      outside-system-tests: ${{ steps.filter.outputs.outside-system-tests }}
       integrations-openclaw: ${{ steps.filter.outputs.integrations-openclaw }}
       integrations-ai-sdk: ${{ steps.filter.outputs.integrations-ai-sdk }}
       integrations-eliza: ${{ steps.filter.outputs.integrations-eliza }}
@@ -152,6 +153,20 @@ jobs:
             - 'hindsight-integration-tests/**'
           system-tests:
             - 'hindsight-system-tests/**'
+          # True when the PR touches anything *other* than the system-test
+          # package. The two unconditional-by-design jobs (build-docs and
+          # verify-generated-files) hang off this rather than off a positive
+          # filter, so they keep running for every change in the repo and only
+          # step aside for a PR confined to hindsight-system-tests/ — a package
+          # nothing generates from and the docs site never reads. Iterating on
+          # that suite otherwise costs ~6 minutes of unrelated CI against a
+          # 36-second test.
+          outside-system-tests:
+            # A lone negation, deliberately. paths-filter builds one matcher per
+            # pattern and ORs them, so adding '**' alongside would make every
+            # file match and the filter always true — a change that looks right
+            # and silently does nothing.
+            - '!hindsight-system-tests/**'
           integrations-openclaw:
             - 'hindsight-integrations/openclaw/**'
           integrations-ai-sdk:
@@ -1407,6 +1422,9 @@ jobs:
     # generation used to build the site again inside verify-generated-files;
     # running the existing job for every PR preserves that coverage without
     # serializing two full Docusaurus builds in the generated-files check.
+    # The one exception is a PR that touches only hindsight-system-tests/,
+    # which the docs site cannot read from — see the filter of the same name.
+    if: needs.detect-changes.outputs.outside-system-tests == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -5355,6 +5373,11 @@ jobs:
         } | tee -a "$GITHUB_STEP_SUMMARY"
 
   verify-generated-files:
+    needs: [detect-changes]
+    # Unconditional for every change except one confined to
+    # hindsight-system-tests/ — no generated file in the repo is produced from
+    # that package, so it cannot drift them. See the outside-system-tests filter.
+    if: needs.detect-changes.outputs.outside-system-tests == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
