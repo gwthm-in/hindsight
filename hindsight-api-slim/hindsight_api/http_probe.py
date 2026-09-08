@@ -6,23 +6,18 @@ libcurl and libssh2 - in every runtime image to make one GET request. Nothing
 else in those images used it, and the three packages carried nine HIGH CVEs
 with no Debian fix available.
 
-**This package deliberately does not belong to ``hindsight_api``.** It is a
-sibling top-level package in the same distribution, and it must never import
-the API - not the engine, not the config, not the package root. Two reasons,
-both load-bearing:
+**This module must never import the engine, the config, or any third-party
+package.** It answers "is an API process up?", and pulling the application in
+to ask that would put the application's startup cost - and its side effects -
+on a loop that runs once per second. ``hindsight-admin`` is the cautionary
+number: it takes ~5s to start in the built image because it loads the CLI and
+everything behind it, against ~0.03s for this.
 
-* **Startup cost.** The readiness loop runs this once per second. Bare
-  interpreter startup is ~0.03s; ``hindsight-admin``, which pulls in the CLI
-  and everything behind it, takes ~5s in the built image. A probe that costs
-  more than the interval it runs on breaks the loop it exists to drive.
-* **What it is probing.** This asks whether an API process is up. Importing the
-  API to do so risks initialising the very machinery whose absence it is
-  meant to detect.
-
-``tests/test_hindsight_probe.py::test_imports_nothing_but_the_standard_library``
-enforces this in a clean subprocess rather than trusting the convention: the
-distribution installs both packages into the same virtualenv, so nothing at the
-packaging layer would stop an ``import hindsight_api`` here from resolving.
+That rule is a test, not a convention:
+``tests/test_http_probe.py::test_imports_nothing_heavy`` imports this module in
+a clean subprocess and asserts that it pulled in no third-party module and none
+of the engine. Living next to the code it must not touch is exactly why the
+check is automated.
 
 The contract is ``curl -sf`` *without* ``-L``, which is what this replaced:
 
@@ -96,7 +91,7 @@ def probe(url: str, timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS) -> bool:
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     if not args or len(args) > 2:
-        print("usage: python -m hindsight_probe URL [TIMEOUT_SECONDS]", file=sys.stderr)
+        print("usage: python -m hindsight_api.http_probe URL [TIMEOUT_SECONDS]", file=sys.stderr)
         return 2
 
     timeout_seconds = DEFAULT_TIMEOUT_SECONDS
@@ -108,3 +103,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     return 0 if probe(args[0], timeout_seconds) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

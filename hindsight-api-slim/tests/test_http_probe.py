@@ -1,7 +1,7 @@
 """Parity tests for the container readiness probe.
 
 Each case is pinned to what `curl -sf` (without -L) does for the same response,
-because that is what `hindsight_probe` replaced in
+because that is what `hindsight_api.http_probe` replaced in
 `docker/standalone/start-all.sh`. The redirect cases are the point: the obvious
 `urllib.request.urlopen` implementation follows redirects and fails on a 404
 behind one, where curl reports success - so a healthy service that redirects
@@ -21,7 +21,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from hindsight_probe import main, probe
+from hindsight_api.http_probe import main, probe
 
 _EXPECTED_AUTH = "Basic " + base64.b64encode(b"user:pa ss").decode()
 
@@ -116,30 +116,35 @@ def test_main_exit_codes(base_url: str, closed_port: int) -> None:
     assert main([f"{base_url}/ok", "not-a-number"]) == 2
 
 
-# The probe must never reach into the API. Both packages install into the same
-# virtualenv, so nothing at the packaging layer stops `import hindsight_api`
-# here from resolving - only this test does. See hindsight_probe's docstring for
-# why it matters: the loop runs once a second, and importing the API to ask
-# whether the API is up risks starting the machinery it is checking for.
+# The probe must not drag the application in behind it. It lives inside
+# hindsight_api, so this cannot assert "no hindsight_api" - it asserts the part
+# that actually matters: no third-party package, and none of the engine, config
+# or API surface. hindsight_api/__init__ is cheap by design (PEP 562 lazy
+# attributes, see its docstring) and this test is what keeps the probe from
+# being the thing that makes it expensive again.
 _IMPORT_AUDIT = """
 import json, sys
 
 before = set(sys.modules)
-import hindsight_probe  # noqa: F401
-new_top_level = {name.split(".")[0] for name in set(sys.modules) - before}
-# _sysconfigdata_* is a platform-specific stdlib internal whose name embeds the
-# build triple, so it is absent from stdlib_module_names on every platform.
-print(json.dumps(sorted(
-    name for name in new_top_level
-    if name not in sys.stdlib_module_names
-    and name != "hindsight_probe"
-    and not name.startswith("_sysconfigdata")
-)))
+import hindsight_api.http_probe  # noqa: F401
+loaded = set(sys.modules) - before
+
+third_party = {
+    name.split(".")[0] for name in loaded
+    if name.split(".")[0] not in sys.stdlib_module_names
+    and not name.startswith("hindsight_api")
+    and not name.split(".")[0].startswith("_sysconfigdata")
+}
+heavy = {
+    name for name in loaded
+    if name.startswith(("hindsight_api.engine", "hindsight_api.api", "hindsight_api.config"))
+}
+print(json.dumps({"third_party": sorted(third_party), "heavy": sorted(heavy)}))
 """
 
 
-def test_imports_nothing_but_the_standard_library() -> None:
-    """Importing the probe must pull in no third-party module, and no API module."""
+def test_imports_nothing_heavy() -> None:
+    """Importing the probe must pull in no third-party package and none of the engine."""
     result = subprocess.run(
         [sys.executable, "-c", _IMPORT_AUDIT],
         capture_output=True,
@@ -147,18 +152,22 @@ def test_imports_nothing_but_the_standard_library() -> None:
         check=True,
         timeout=60,
     )
-    assert json.loads(result.stdout) == [], (
-        f"hindsight_probe must import only the standard library; it pulled in {result.stdout.strip()}"
+    loaded = json.loads(result.stdout)
+    assert loaded["third_party"] == [], (
+        f"the readiness probe must not import third-party packages; it pulled in {loaded['third_party']}"
+    )
+    assert loaded["heavy"] == [], (
+        f"the readiness probe must not import the engine/API/config; it pulled in {loaded['heavy']}"
     )
 
 
 def test_runnable_as_a_module() -> None:
-    """`python -m hindsight_probe` is how start-all.sh invokes it."""
+    """`python -m hindsight_api.http_probe` is how start-all.sh invokes it."""
     result = subprocess.run(
-        [sys.executable, "-m", "hindsight_probe"],
+        [sys.executable, "-m", "hindsight_api.http_probe"],
         capture_output=True,
         text=True,
         timeout=60,
     )
     assert result.returncode == 2
-    assert "usage: python -m hindsight_probe" in result.stderr
+    assert "usage: python -m hindsight_api.http_probe" in result.stderr

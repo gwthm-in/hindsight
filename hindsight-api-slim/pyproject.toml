@@ -174,24 +174,20 @@ hindsight-local-mcp = "hindsight_api.mcp_local:main"
 hindsight-admin = "hindsight_api.admin.cli:main"
 
 [tool.hatch.build.targets.wheel]
-# hindsight_probe is a separate top-level package on purpose - see its docstring.
-packages = ["hindsight_api", "hindsight_probe"]
+packages = ["hindsight_api"]
 
 [tool.hatch.build.targets.wheel.sources]
 "hindsight_api" = "hindsight_api"
-"hindsight_probe" = "hindsight_probe"
 
 [tool.hatch.build.targets.sdist]
 include = [
     "hindsight_api/**/*",
-    "hindsight_probe/**/*",
 ]
 
 [tool.hatch.build]
 include = [
     "hindsight_api/**/*.py",
     "hindsight_api/alembic/**/*",
-    "hindsight_probe/**/*.py",
 ]
 
 [tool.pytest.ini_options]
