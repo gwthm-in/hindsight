@@ -224,6 +224,27 @@ describe("retainLiveSession — incremental write-back", () => {
     expect(pending[0].content).toBe(retain.mock.calls[3][0]);
   });
 
+  it("stops flushing rather than starting a request the host deadline cannot fit", async () => {
+    const { retain, client } = stubClient();
+    const cursors = memoryCursorStore();
+    await write(client, turns(2), cursors);
+    retain.mockRejectedValueOnce(new Error("timeout"));
+    await expect(write(client, turns(4), cursors)).rejects.toThrow("timeout");
+
+    // A budget that fits the replay and nothing after it: the new tail stays buffered for the next
+    // write-back instead of overrunning the deadline the host kills the hook at.
+    await retainLiveSession(client, "s1", turns(6), "2026-01-01T00:00:00Z", "codex", {
+      cursors,
+      retryUntil: Date.now(),
+    });
+    expect(retain).toHaveBeenCalledTimes(3);
+    expect(cursors.read("s1")?.pending).toHaveLength(1);
+
+    await write(client, turns(6), cursors);
+    expect(retain).toHaveBeenCalledTimes(4);
+    expect(cursors.read("s1")?.pending).toBeUndefined();
+  });
+
   it("replaces again after a failed replace, which needs no buffer to be idempotent", async () => {
     const { retain, client } = stubClient();
     const cursors = memoryCursorStore();

@@ -328,6 +328,12 @@ async function writeSession(
   // which is the one thing appending onto an unknown state could otherwise get wrong.
   cursors?.write(sessionId, { ...next, pending: queue });
   for (let i = 0; i < queue.length; i++) {
+    // One request per entry, each able to burn the full 15s abort — where this used to send exactly
+    // once. Never START one that cannot finish inside the caller's budget: a hook harness is killed
+    // by its host at `retryUntil` (retain-hook's hostDeadline), and a flush that overruns it buys
+    // nothing. The first entry always goes out, so a chronically short budget still makes progress;
+    // whatever is left is already durable, so the next write-back sends it.
+    if (i > 0 && Date.now() + REQUEST_BUDGET_MS > retryUntil) return;
     const entry = queue[i];
     await submitWithRetry(
       () => submit(entry.content, entry.operationId, true),
