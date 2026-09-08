@@ -1,7 +1,7 @@
 """Parity tests for the container readiness probe.
 
 Each case is pinned to what `curl -sf` (without -L) does for the same response,
-because that is what `hindsight_api.http_probe` replaced in
+because that is what `hindsight_probe` replaced in
 `docker/standalone/start-all.sh`. The redirect cases are the point: the obvious
 `urllib.request.urlopen` implementation follows redirects and fails on a 404
 behind one, where curl reports success - so a healthy service that redirects
@@ -12,13 +12,16 @@ from __future__ import annotations
 
 import base64
 import http.server
+import json
 import socket
+import subprocess
+import sys
 import threading
 from collections.abc import Iterator
 
 import pytest
 
-from hindsight_api.http_probe import main, probe
+from hindsight_probe import main, probe
 
 _EXPECTED_AUTH = "Basic " + base64.b64encode(b"user:pa ss").decode()
 
@@ -111,3 +114,51 @@ def test_main_exit_codes(base_url: str, closed_port: int) -> None:
     assert main([f"http://127.0.0.1:{closed_port}/ok", "2"]) == 1
     assert main([]) == 2
     assert main([f"{base_url}/ok", "not-a-number"]) == 2
+
+
+# The probe must never reach into the API. Both packages install into the same
+# virtualenv, so nothing at the packaging layer stops `import hindsight_api`
+# here from resolving - only this test does. See hindsight_probe's docstring for
+# why it matters: the loop runs once a second, and importing the API to ask
+# whether the API is up risks starting the machinery it is checking for.
+_IMPORT_AUDIT = """
+import json, sys
+
+before = set(sys.modules)
+import hindsight_probe  # noqa: F401
+new_top_level = {name.split(".")[0] for name in set(sys.modules) - before}
+# _sysconfigdata_* is a platform-specific stdlib internal whose name embeds the
+# build triple, so it is absent from stdlib_module_names on every platform.
+print(json.dumps(sorted(
+    name for name in new_top_level
+    if name not in sys.stdlib_module_names
+    and name != "hindsight_probe"
+    and not name.startswith("_sysconfigdata")
+)))
+"""
+
+
+def test_imports_nothing_but_the_standard_library() -> None:
+    """Importing the probe must pull in no third-party module, and no API module."""
+    result = subprocess.run(
+        [sys.executable, "-c", _IMPORT_AUDIT],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    assert json.loads(result.stdout) == [], (
+        f"hindsight_probe must import only the standard library; it pulled in {result.stdout.strip()}"
+    )
+
+
+def test_runnable_as_a_module() -> None:
+    """`python -m hindsight_probe` is how start-all.sh invokes it."""
+    result = subprocess.run(
+        [sys.executable, "-m", "hindsight_probe"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 2
+    assert "usage: python -m hindsight_probe" in result.stderr

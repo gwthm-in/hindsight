@@ -67,6 +67,9 @@ COPY hindsight-api-slim/README.md ./api/
 # Source is needed to build the package, so this is one step rather than
 # deps-then-source; `uv pip install` has no --no-install-package.
 COPY hindsight-api-slim/hindsight_api ./api/hindsight_api
+# Sibling top-level package, not part of hindsight_api: the readiness probe the
+# entrypoint shells out to. See hindsight_probe/__init__.py for why it is separate.
+COPY hindsight-api-slim/hindsight_probe ./api/hindsight_probe
 
 # Not `uv sync --locked`: uv.lock pins the resolution for the default interpreter and
 # this one resolves different wheels. That is exactly why this ships as its own tag

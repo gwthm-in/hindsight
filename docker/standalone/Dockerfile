@@ -68,6 +68,9 @@ RUN if [ "$INCLUDE_LOCAL_MODELS" = "true" ]; then \
 # Copy source code (alembic migrations are inside hindsight_api/)
 WORKDIR /app/api
 COPY hindsight-api-slim/hindsight_api ./hindsight_api
+# Sibling top-level package, not part of hindsight_api: the readiness probe the
+# entrypoint shells out to. See hindsight_probe/__init__.py for why it is separate.
+COPY hindsight-api-slim/hindsight_probe ./hindsight_probe
 
 # Install the local package from the same validated lock after source is present.
 WORKDIR /app

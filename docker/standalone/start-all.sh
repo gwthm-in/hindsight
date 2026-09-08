@@ -127,26 +127,27 @@ resolve_api_startup_wait_seconds() {
 # =============================================================================
 # HTTP readiness probe
 #
-# The implementation is hindsight_api.http_probe, not Python embedded here: it
+# The implementation is the hindsight_probe package, not Python embedded here: it
 # needs to be linted, type-checked and unit-tested, and the parity rules it
 # encodes (notably that `curl -sf` does NOT follow redirects) are too easy to
 # get subtly wrong to leave in a shell string. See that module's docstring.
 #
-# Every image that probes anything ships the API package, so `python3 -m` finds
-# it. cp-only has neither and probes nothing.
+# Every image that probes anything ships that package, so `python3 -m` finds
+# it. It imports stdlib only and never the API - see its docstring. cp-only has
+# no Python at all and probes nothing.
 # =============================================================================
 http_probe() {
     local url="$1"
     local timeout_seconds="${2:-5}"
 
-    python3 -m hindsight_api.http_probe "$url" "$timeout_seconds"
+    python3 -m hindsight_probe "$url" "$timeout_seconds"
 }
 
 # A probe that cannot run at all would silently degrade into "never ready", so
 # check once, up front, where it can still say why.
 require_http_probe_runtime() {
-    if ! python3 -c "import hindsight_api.http_probe" >/dev/null 2>&1; then
-        echo "❌ HTTP readiness probes need python3 with hindsight_api importable."
+    if ! python3 -c "import hindsight_probe" >/dev/null 2>&1; then
+        echo "❌ HTTP readiness probes need python3 with hindsight_probe importable."
         exit 1
     fi
 }

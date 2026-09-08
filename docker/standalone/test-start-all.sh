@@ -61,11 +61,11 @@ assert_empty() {
 # implements them: hindsight-api-slim/tests/test_http_probe.py. All that is
 # left to check here is that this script delegates to it correctly.
 #
-# Skipped when the API package is not importable - this file also runs in CI
+# Skipped when hindsight_probe is not importable - this file also runs in CI
 # from a bare checkout with no virtualenv, where only the pg0 helpers below
 # are exercisable.
 # =============================================================================
-if python3 -c "import hindsight_api.http_probe" >/dev/null 2>&1; then
+if python3 -c "import hindsight_probe" >/dev/null 2>&1; then
     HTTP_PORT_FILE="$TMP_DIR/http-port"
 
     python3 - "$HTTP_PORT_FILE" <<'PY' &
@@ -117,7 +117,7 @@ PY
     HTTP_SERVER_PID=""
     echo "start-all HTTP probe wiring checks passed"
 else
-    echo "start-all HTTP probe wiring checks skipped (hindsight_api not importable)"
+    echo "start-all HTTP probe wiring checks skipped (hindsight_probe not importable)"
 fi
 
 mkdir -p "$TMP_DIR/empty"

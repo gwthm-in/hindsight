@@ -1,22 +1,28 @@
-"""HTTP readiness probe for the container entrypoint.
+"""Container readiness probe. Standard library only, by rule.
 
 ``docker/standalone/start-all.sh`` polls the API's health endpoint while it
 starts. That used to be ``curl -sf``, which meant shipping curl - and with it
-libcurl and libssh2 - in every runtime image purely to make one GET request.
-Nothing else in those images used it, and the three packages carried nine HIGH
-CVEs with no Debian fix available.
+libcurl and libssh2 - in every runtime image to make one GET request. Nothing
+else in those images used it, and the three packages carried nine HIGH CVEs
+with no Debian fix available.
 
-This replaces it. It lives here, rather than as Python embedded in the shell
-script, so that it is linted, type-checked and unit-tested like the rest of the
-package: the embedded version could only be exercised through the shell, and
-every quote in it had to survive two levels of escaping.
+**This package deliberately does not belong to ``hindsight_api``.** It is a
+sibling top-level package in the same distribution, and it must never import
+the API - not the engine, not the config, not the package root. Two reasons,
+both load-bearing:
 
-**Only the standard library may be imported here.** The probe runs once per
-second in the readiness loop, so import cost is the budget: ``python -m
-hindsight_api.http_probe`` measures ~0.12s in the built image, almost all of it
-interpreter startup, and pulling in anything from the engine would blow that.
-``hindsight_api/__init__`` is cheap by design (see its docstring) and must stay
-that way for this to hold.
+* **Startup cost.** The readiness loop runs this once per second. Bare
+  interpreter startup is ~0.03s; ``hindsight-admin``, which pulls in the CLI
+  and everything behind it, takes ~5s in the built image. A probe that costs
+  more than the interval it runs on breaks the loop it exists to drive.
+* **What it is probing.** This asks whether an API process is up. Importing the
+  API to do so risks initialising the very machinery whose absence it is
+  meant to detect.
+
+``tests/test_hindsight_probe.py::test_imports_nothing_but_the_standard_library``
+enforces this in a clean subprocess rather than trusting the convention: the
+distribution installs both packages into the same virtualenv, so nothing at the
+packaging layer would stop an ``import hindsight_api`` here from resolving.
 
 The contract is ``curl -sf`` *without* ``-L``, which is what this replaced:
 
@@ -45,11 +51,13 @@ import http.client
 import sys
 from urllib.parse import unquote, urlsplit
 
+__all__ = ["DEFAULT_TIMEOUT_SECONDS", "main", "probe"]
+
 DEFAULT_TIMEOUT_SECONDS = 5.0
 
 
 def probe(url: str, timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS) -> bool:
-    """Return True if ``url`` answers like ``curl -sf`` would call success.
+    """Return True if ``url`` answers the way ``curl -sf`` would call success.
 
     Never raises: a probe that blew up on an unexpected socket error would be
     indistinguishable from a crash in the readiness loop that calls it.
@@ -88,7 +96,7 @@ def probe(url: str, timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS) -> bool:
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     if not args or len(args) > 2:
-        print("usage: python -m hindsight_api.http_probe URL [TIMEOUT_SECONDS]", file=sys.stderr)
+        print("usage: python -m hindsight_probe URL [TIMEOUT_SECONDS]", file=sys.stderr)
         return 2
 
     timeout_seconds = DEFAULT_TIMEOUT_SECONDS
@@ -100,7 +108,3 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     return 0 if probe(args[0], timeout_seconds) else 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
