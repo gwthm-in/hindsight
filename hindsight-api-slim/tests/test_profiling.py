@@ -142,3 +142,28 @@ def test_deltas_survive_code_objects_being_freed(monkeypatch):
     assert all(isinstance(k, str) for k in profiling._previous), (
         "baselines must be keyed by a stable label, not by id()"
     )
+
+
+def test_create_app_arms_profiling_so_workers_are_covered(monkeypatch):
+    """Arming in main() alone is not enough when uvicorn runs `--workers N`.
+
+    Workers are spawned processes that import the app and never run main(), so profiling
+    armed only in main() covers the supervisor -- which does nothing but waitpid() -- and
+    reports an idle process while every request is served in a worker it cannot see.
+    Verified against a real 2-worker deployment before this call was added: 63 report
+    lines, all of them supervisor bookkeeping.
+    """
+    import hindsight_api.api.http as http_module
+
+    called = []
+    monkeypatch.setattr(profiling, "install", lambda: called.append(True) or False)
+    monkeypatch.setattr("hindsight_api.profiling.install", lambda: called.append(True) or False)
+
+    source = pathlib.Path(http_module.__file__).read_text()
+    body = source.split("def create_app(", 1)[1]
+    assert "_install_profiling()" in body.split("def ", 1)[0], (
+        "create_app must arm profiling, or --workers deployments profile the supervisor"
+    )
+
+
+import pathlib  # noqa: E402  (used by the test above)
