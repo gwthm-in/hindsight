@@ -698,9 +698,7 @@ class TestListMentalModelsMetadataOnly:
         assert "reflect_response" not in item
         assert "trigger" not in item
 
-    async def test_list_requests_metadata_and_staleness_from_engine(
-        self, mcp_server_with_mental_models, mock_memory
-    ):
+    async def test_list_requests_metadata_and_staleness_from_engine(self, mcp_server_with_mental_models, mock_memory):
         await _tools(mcp_server_with_mental_models)["list_mental_models"].fn()
         kwargs = mock_memory.list_mental_models.await_args.kwargs
         assert kwargs["detail"] == "metadata"
