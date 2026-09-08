@@ -6,6 +6,7 @@ they assert behaviour rather than merely that ``install()`` returns.
 
 import json
 import logging
+import pathlib
 import threading
 
 import pytest
@@ -167,3 +168,25 @@ def test_create_app_arms_profiling_so_workers_are_covered(monkeypatch):
 
 
 import pathlib  # noqa: E402  (used by the test above)
+
+
+def test_recall_phase_histogram_can_resolve_a_millisecond_phase():
+    """The phase histogram must have buckets sized for the values it records.
+
+    Its unit is seconds and recall phases take milliseconds, so the SDK default boundaries
+    (0, 5, 10, 25, ...) put every observation in the first bucket: the histogram then
+    reports a mean but no usable percentile. Asked for a p99 it answered 2500 ms for all
+    fifteen phases at once -- the midpoint of the 0-5s bucket -- which is what sent an
+    investigation of a 460 ms p99 down a blind alley.
+    """
+    import hindsight_api.metrics as metrics_module
+
+    source = pathlib.Path(metrics_module.__file__).read_text()
+    # Slice to the NEXT instrument, not to the first ")": the description text contains
+    # parentheses, which truncated this block before the argument it is checking for.
+    block = source.split('name="hindsight.recall.phase.duration"', 1)[1]
+    block = block.split("self.recall_phase_calls", 1)[0]
+    assert "explicit_bucket_boundaries_advisory" in block, (
+        "the recall phase histogram needs millisecond-scale buckets, or its percentiles are fiction"
+    )
+    assert "0.025" in block, "buckets must cover the 10-50ms range where recall phases live"
