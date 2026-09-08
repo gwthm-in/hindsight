@@ -62,7 +62,7 @@ logger = logging.getLogger("hindsight_api.profiling")
 
 _installed = False
 _profiler = None  # the armed cProfile.Profile; module-level so a report can be forced in tests
-_previous: dict[int, tuple[int, float, float]] = {}
+_previous: dict[str, tuple[int, float, float]] = {}
 
 
 def _config() -> dict | None:
@@ -143,14 +143,18 @@ def _emit(prof, cfg: dict) -> None:
     try:
         rows = []
         for stat in prof.getstats():
-            key = id(stat.code)
+            # Keyed by the label, NOT id(code): CPython reuses ids once an object is
+            # freed, and code objects here are not all long-lived -- a process compiling
+            # code at runtime frees them constantly. A reused id would silently subtract
+            # the wrong baseline and report a nonsense delta.
+            key = _label(stat.code)
             prev = _previous.get(key)
             d_calls = stat.callcount - (prev[0] if prev else 0)
             d_inline = stat.inlinetime - (prev[1] if prev else 0.0)
             d_total = stat.totaltime - (prev[2] if prev else 0.0)
             _previous[key] = (stat.callcount, stat.inlinetime, stat.totaltime)
             if d_inline > 0 or d_calls > 0:
-                rows.append((d_inline, d_total, d_calls, _label(stat.code)))
+                rows.append((d_inline, d_total, d_calls, key))
         rows.sort(reverse=True)
         logger.info("[profile] %d functions active in the last %ds", len(rows), cfg["every"])
         for d_inline, d_total, d_calls, label in rows[: cfg["top"]]:

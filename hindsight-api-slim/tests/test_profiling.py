@@ -125,3 +125,20 @@ def test_install_is_idempotent(monkeypatch):
     monkeypatch.setenv(profiling.ENV_PROFILE, json.dumps({"every": 3600}))
     assert profiling.install() is True
     assert profiling.install() is True
+
+
+def test_deltas_survive_code_objects_being_freed(monkeypatch):
+    """Baselines are keyed by label, not id(), because CPython reuses ids.
+
+    A process that compiles code at runtime frees code objects constantly. Keyed by
+    id(), a reused address would subtract another function's baseline and report a
+    nonsense delta -- silently, since the number still looks like a number.
+    """
+    monkeypatch.setenv(profiling.ENV_PROFILE, json.dumps({"every": 3600}))
+    assert profiling.install() is True
+    profiling._emit(profiling._profiler, {"every": 1, "top": 5})
+
+    assert profiling._previous, "a report must record baselines"
+    assert all(isinstance(k, str) for k in profiling._previous), (
+        "baselines must be keyed by a stable label, not by id()"
+    )
