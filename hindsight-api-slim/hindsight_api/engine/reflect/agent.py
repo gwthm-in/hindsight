@@ -1141,10 +1141,20 @@ async def _run_reflect_agent_inner(
                     allowed_positions.append(position)
 
             # Build assistant message with all tool calls (LLM requires them for history)
+            #
+            # The wire ids are deduped once, up front, and reused for the
+            # tool_result messages below so the two stay one-to-one: a strict
+            # Anthropic API rejects the whole turn when two tool_use blocks share
+            # an id ("each tool_use must have a single result"), and the gateways
+            # that repeat or blank out ids are the same ones the positional
+            # slotting below defends against.
+            wire_tool_call_ids = _unique_tool_call_ids(other_tools)
             messages.append(
                 {
                     "role": "assistant",
-                    "tool_calls": [_tool_call_to_dict(tc) for tc in other_tools],
+                    "tool_calls": [
+                        _tool_call_to_dict(tc, wire_id) for tc, wire_id in zip(other_tools, wire_tool_call_ids)
+                    ],
                 }
             )
 
@@ -1307,11 +1317,11 @@ async def _run_reflect_agent_inner(
             # Emit tool_result messages in the assistant tool_calls order so the
             # serialized history matches the tool_use blocks (Anthropic requires
             # tool_result blocks in the same order as the corresponding tool_use).
-            for tc, tool_output in zip(ordered_tool_calls, tool_outputs):
+            for wire_id, tool_output in zip(wire_tool_call_ids, tool_outputs):
                 messages.append(
                     {
                         "role": "tool",
-                        "tool_call_id": tc.id,
+                        "tool_call_id": wire_id,
                         "content": tool_output,
                     }
                 )
@@ -1326,10 +1336,31 @@ async def _run_reflect_agent_inner(
     )
 
 
-def _tool_call_to_dict(tc: "LLMToolCall") -> dict[str, Any]:
+def _unique_tool_call_ids(tool_calls: list["LLMToolCall"]) -> list[str]:
+    """Pick one unique wire id per tool call, by position, for a parallel batch.
+
+    A non-conforming OpenAI-compatible gateway can hand back duplicate or empty
+    ids, and a strict Anthropic API then rejects the turn outright ("each
+    tool_use must have a single result"). Only the ids that would collide are
+    rewritten, so a conforming provider keeps the ids it minted.
+    """
+    seen: set[str] = set()
+    wire_ids: list[str] = []
+    for position, tc in enumerate(tool_calls):
+        wire_id = (tc.id or "").strip()
+        if not wire_id or wire_id in seen:
+            wire_id = f"{wire_id or 'toolcall'}_{position}"
+            while wire_id in seen:
+                wire_id += "_"
+        seen.add(wire_id)
+        wire_ids.append(wire_id)
+    return wire_ids
+
+
+def _tool_call_to_dict(tc: "LLMToolCall", wire_id: str | None = None) -> dict[str, Any]:
     """Convert LLMToolCall to OpenAI message format."""
     d: dict[str, Any] = {
-        "id": tc.id,
+        "id": wire_id if wire_id is not None else tc.id,
         "type": "function",
         "function": {
             "name": tc.name,
