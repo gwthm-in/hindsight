@@ -1386,6 +1386,94 @@ class TestReflectAgentMocked:
         assert "second" in tool_messages[1]["content"], tool_messages
         assert "third" in tool_messages[2]["content"], tool_messages
 
+    @pytest.mark.asyncio
+    async def test_wire_ids_stay_unique_across_iterations(
+        self, mock_llm: MagicMock, mock_functions: dict[str, AsyncMock]
+    ) -> None:
+        """A gateway that blanks ids blanks them EVERY turn; the replacements must still differ.
+
+        The whole reflect loop serializes into one request, so deduping per batch
+        would mint the same replacement id on turn 1 and turn 2 and hand the
+        strict API back the collision it was supposed to remove.
+        """
+        mock_functions["recall_fn"].side_effect = [
+            {"memories": [{"id": "mem-1", "content": "first"}]},
+            {"memories": [{"id": "mem-2", "content": "second"}]},
+        ]
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="", name="recall", arguments={"query": "q1"})],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="", name="recall", arguments={"query": "q2"})],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="d", name="done", arguments={"answer": "A", "memory_ids": ["mem-1"]})],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="test query",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            **mock_functions,
+        )
+
+        messages = mock_llm.call_with_tools.call_args_list[-1].kwargs["messages"]
+        tool_use_ids = [
+            tc["id"] for m in messages if m.get("role") == "assistant" and m.get("tool_calls") for tc in m["tool_calls"]
+        ]
+        assert len(tool_use_ids) == 2, tool_use_ids
+        assert len(set(tool_use_ids)) == 2, tool_use_ids
+        # Each tool_use is still answered by exactly one tool_result.
+        assert [m["tool_call_id"] for m in messages if m.get("role") == "tool"] == tool_use_ids
+
+    @pytest.mark.asyncio
+    async def test_premature_done_guardrail_emits_a_usable_wire_id(
+        self, mock_llm: MagicMock, mock_functions: dict[str, AsyncMock]
+    ) -> None:
+        """The "search first" guardrail loops, so its tool_use needs a deduped id too.
+
+        An empty id reaches Anthropic verbatim as ``tool_use.id: ""`` and is
+        rejected, taking the whole reflect run with it.
+        """
+        mock_functions["recall_fn"].side_effect = [{"memories": [{"id": "mem-1", "content": "first"}]}]
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="", name="done", arguments={"answer": "premature"})],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="", name="recall", arguments={"query": "q"})],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="d", name="done", arguments={"answer": "A", "memory_ids": ["mem-1"]})],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="test query",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            **mock_functions,
+        )
+
+        messages = mock_llm.call_with_tools.call_args_list[-1].kwargs["messages"]
+        tool_use_ids = [
+            tc["id"] for m in messages if m.get("role") == "assistant" and m.get("tool_calls") for tc in m["tool_calls"]
+        ]
+        assert len(tool_use_ids) == 2, tool_use_ids
+        assert all(tool_use_id for tool_use_id in tool_use_ids), tool_use_ids
+        assert len(set(tool_use_ids)) == 2, tool_use_ids
+        assert [m["tool_call_id"] for m in messages if m.get("role") == "tool"] == tool_use_ids
+
 
 class TestContextOverflowHelpers:
     """Unit tests for context-overflow detection helpers."""
