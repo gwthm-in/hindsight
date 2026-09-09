@@ -373,6 +373,67 @@ describe("HindsightClient.seedPages", () => {
     }
   });
 
+  /**
+   * On a repo that has been worked for a while the captured initiative pages outnumber the seeded
+   * taxonomy several times over, and `captureInitiative` stamps them with the same trigger — so a
+   * migration that skipped them would leave most of the auto-refresh cost in place (#3506).
+   */
+  it("re-syncs the initiative pages under their folder, trigger only", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      {
+        match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"),
+        json: {
+          roots: [
+            ...PAGES.map((p, i) => ({
+              id: `kp-${i}`,
+              kind: "page",
+              name: p.name,
+              description: p.source_query,
+              trigger: { ...settledTrigger(p.name), refresh_after_consolidation: false },
+            })),
+            {
+              id: "folder-initiatives",
+              kind: "folder",
+              name: "Initiatives",
+              children: [
+                {
+                  id: "kp-init-1",
+                  kind: "page",
+                  name: "Typo-tolerant tag matching",
+                  description: "Summarize the initiative",
+                  trigger: { tags_match: "all", refresh_after_consolidation: true },
+                },
+                {
+                  // Already settled — an idempotent run must not touch it.
+                  id: "kp-init-2",
+                  kind: "page",
+                  name: "opencode2 harness support",
+                  description: "Summarize the initiative",
+                  trigger: {
+                    ...settledTrigger("opencode2 harness support"),
+                    refresh_after_consolidation: false,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await c.seedPages();
+
+    const patches = calls.filter((k) => k.method === "PATCH");
+    expect(patches).toHaveLength(1);
+    expect(patches[0].url).toContain("kp-init-1");
+    // The initiative's own question is left alone — it was written from the title at capture time,
+    // and re-stating it would rebuild a page whose question never changed.
+    expect(patches[0].body).toEqual({
+      trigger: pageTriggerFor(buildPageTrigger(), "repo-a", "Typo-tolerant tag matching"),
+    });
+  });
+
   // "manual" is the one policy whose refresh field is falsy, so the server drops no counterpart:
   // without an explicit null the page would keep firing on the cron it already had.
   it("clears an existing schedule when the config asks for manual refreshes", async () => {

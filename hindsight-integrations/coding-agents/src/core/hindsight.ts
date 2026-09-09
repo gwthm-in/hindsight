@@ -710,11 +710,49 @@ export class HindsightClient {
         updated++;
       }
     }
+    const initiatives = await this.resyncInitiativeTriggers(roots, pageTrigger);
     this.log(
       `[bank] knowledge pages seeded on ${this.bank} (scoped to ${this.project ?? this.bank}): ` +
         `${created} created, ${updated} re-synced, ` +
-        `${pages.length - created - updated} unchanged`
+        `${pages.length - created - updated} unchanged` +
+        (initiatives ? `, ${initiatives} initiative pages re-synced` : "")
     );
+  }
+
+  /**
+   * Bring the captured initiative pages onto the same refresh policy as the seeded taxonomy.
+   *
+   * `captureInitiative` stamps this very trigger when it creates a page, so on a bank seeded under
+   * an older default they are the same drift as the taxonomy — and on a real repo they are most of
+   * it: five taxonomy pages against one page per initiative, each an LLM synthesis per
+   * consolidation under the auto-refresh that used to be the default (#3506).
+   *
+   * Only the trigger is touched. Their `name` and `source_query` are written once, from the
+   * initiative's own title, and re-stating either would rebuild a page whose question never
+   * changed. The tree read above is reused rather than re-fetched.
+   */
+  private async resyncInitiativeTriggers(
+    roots: KnowledgeNode[],
+    pageTrigger: PageTrigger
+  ): Promise<number> {
+    const folder = roots.find(
+      (n) => n.kind === "folder" && (n.name || "").toLowerCase() === "initiatives"
+    );
+    let updated = 0;
+    for (const page of folder?.children ?? []) {
+      // No trigger reported = policy unknown, not divergent (a server older than #3572).
+      if (page.kind !== "page" || page.trigger == null) continue;
+      const desired = pageTriggerFor(pageTrigger, this.bank, page.name);
+      if (!pageTriggerDrifted(page.trigger, desired)) continue;
+      const r = await this.req(
+        "PATCH",
+        this.bankUrl(`/knowledge-base/nodes/${encodeURIComponent(page.id)}`),
+        { trigger: pageTriggerPatch(desired) }
+      );
+      if ([404, 405, 501].includes(r.status)) break;
+      updated++;
+    }
+    return updated;
   }
 
   /** URL/id-safe slug: lowercase, non-alphanumerics → "-", trim dashes, cap length; fallback "initiative". */
