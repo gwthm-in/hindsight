@@ -297,7 +297,10 @@ export interface PageTrigger {
   /** How the page's own `tags` filter the memories a refresh reads. See `PAGE_TAGS_MATCH`. */
   tags_match: "any" | "all" | "any_strict" | "all_strict" | "exact";
   refresh_after_consolidation?: boolean;
-  refresh_cron?: string;
+  /** `null` CLEARS a schedule the page already has. The server drops an unstated counterpart only
+   *  for a truthy field, so `{refresh_after_consolidation: false}` alone would leave a cron in
+   *  place and the page would keep refreshing — see `pageTriggerPatch`. */
+  refresh_cron?: string | null;
 }
 
 /**
@@ -495,6 +498,45 @@ export function buildPageTrigger(cfg: PageTriggerConfig = {}): PageTrigger {
     default:
       return { ...base, refresh_cron: cfg.pageTriggerCron || DEFAULT_PAGE_TRIGGER_CRON };
   }
+}
+
+/** A page's refresh policy as the tree reports it — the EFFECTIVE one, defaults filled in. */
+export interface CurrentPageTrigger {
+  tags_match?: string;
+  refresh_after_consolidation?: boolean;
+  refresh_cron?: string | null;
+}
+
+/**
+ * Has an existing page's refresh policy drifted from what this config asks for?
+ *
+ * Compared against the page's OWN resolved trigger (`pageTriggerFor`), not the shared one: under a
+ * hashed cron every page has a different expression, and comparing the unresolved `H * * * *`
+ * would report drift on every page on every session.
+ *
+ * Only the fields this plugin actually states are compared. Everything else on the trigger —
+ * `mode`, sibling exclusion, `min_refresh_interval_seconds` — is the server's or the operator's,
+ * and a re-sync must not have an opinion about it (#3506).
+ */
+export function pageTriggerDrifted(current: CurrentPageTrigger, desired: PageTrigger): boolean {
+  return (
+    current.tags_match !== desired.tags_match ||
+    (current.refresh_cron ?? null) !== (desired.refresh_cron ?? null) ||
+    Boolean(current.refresh_after_consolidation) !== Boolean(desired.refresh_after_consolidation)
+  );
+}
+
+/**
+ * The trigger to PATCH onto an existing page, given the one we would create it with.
+ *
+ * The server merges a trigger patch field by field and drops the unstated counterpart of a TRUTHY
+ * refresh field, so a cron patch clears auto-refresh and vice versa. `manual` is the gap: its
+ * `refresh_after_consolidation: false` is falsy, nothing is dropped, and a page that had a cron
+ * would keep firing on it. Stating `refresh_cron: null` closes that.
+ */
+export function pageTriggerPatch(desired: PageTrigger): PageTrigger {
+  if (desired.refresh_after_consolidation === false) return { ...desired, refresh_cron: null };
+  return desired;
 }
 
 // ── the bank template ──────────────────────────────────────────────────────────

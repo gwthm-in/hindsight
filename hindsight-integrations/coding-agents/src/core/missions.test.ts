@@ -8,7 +8,9 @@ import {
   DEFAULT_PAGE_TRIGGER_CRON,
   expandCronHash,
   KNOWLEDGE_LABELS,
+  pageTriggerDrifted,
   pageTriggerFor,
+  pageTriggerPatch,
   PAGE_FACT_TYPES,
   REFLECT_MISSION,
   RETAIN_STRATEGIES,
@@ -161,6 +163,69 @@ describe("hashed cron fields", () => {
   it("passes a trigger with no cron through untouched", () => {
     const auto = buildPageTrigger(resolveConfig({ pageTriggerType: "auto-refresh" }));
     expect(pageTriggerFor(auto, "repo-a", "Component map")).toBe(auto);
+  });
+});
+
+/**
+ * An existing page is re-synced to whatever the config says, so a changed default reaches a bank
+ * that was seeded under the old one — the point of the migration off auto-refresh.
+ */
+describe("pageTriggerDrifted", () => {
+  const settled = (name: string) => pageTriggerFor(buildPageTrigger(), "repo-a", name);
+
+  it("sees no drift in the policy it just wrote", () => {
+    const desired = settled("Component map");
+    // What the server reports back: the effective policy, with the exclusive counterpart at its
+    // default rather than absent.
+    expect(pageTriggerDrifted({ ...desired, refresh_after_consolidation: false }, desired)).toBe(
+      false
+    );
+  });
+
+  it("sees a page still on the old auto-refresh default as drifted", () => {
+    expect(
+      pageTriggerDrifted(
+        { tags_match: "all", refresh_after_consolidation: true, refresh_cron: null },
+        settled("Component map")
+      )
+    ).toBe(true);
+  });
+
+  it("sees a different schedule as drifted", () => {
+    const desired = settled("Component map");
+    expect(pageTriggerDrifted({ tags_match: "all", refresh_cron: "0 3 * * *" }, desired)).toBe(
+      true
+    );
+    // Compared against the page's OWN resolved cron, never the shared `H * * * *` — otherwise
+    // every page would look drifted on every session.
+    expect(desired.refresh_cron).not.toBe(DEFAULT_PAGE_TRIGGER_CRON);
+    expect(
+      pageTriggerDrifted({ ...desired, refresh_cron: DEFAULT_PAGE_TRIGGER_CRON }, desired)
+    ).toBe(true);
+  });
+
+  it("still sees the tags_match drift it was originally written for", () => {
+    const desired = settled("Component map");
+    expect(pageTriggerDrifted({ ...desired, tags_match: "all_strict" }, desired)).toBe(true);
+  });
+});
+
+/**
+ * The server drops the unstated counterpart of a TRUTHY refresh field, so a cron patch clears
+ * auto-refresh by itself. `manual` is falsy and clears nothing — hence the explicit null.
+ */
+describe("pageTriggerPatch", () => {
+  it("leaves a cron or auto-refresh patch alone", () => {
+    for (const type of ["cron", "auto-refresh"] as const) {
+      const desired = buildPageTrigger(resolveConfig({ pageTriggerType: type }));
+      expect(pageTriggerPatch(desired)).toEqual(desired);
+    }
+  });
+
+  it("clears an existing schedule when moving a page to manual", () => {
+    const patch = pageTriggerPatch(buildPageTrigger(resolveConfig({ pageTriggerType: "manual" })));
+    expect(patch.refresh_after_consolidation).toBe(false);
+    expect(patch.refresh_cron).toBeNull();
   });
 });
 

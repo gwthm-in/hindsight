@@ -546,11 +546,14 @@ problem. It never reaches the API: the plugin resolves it to an ordinary cron ex
 one you can edit. Hashing spreads pages out, it does not partition them — two pages can still land
 on the same minute, just not all of them.
 
-**These settings apply to pages created from here on.** Changing them does not migrate the pages a
-repo already has: a page keeps the trigger it was created with, so a bank seeded before this
-default changed keeps refreshing on every consolidation. To move an existing page, change its trigger
-through the API (`PATCH /knowledge-base/nodes/{id}`), an SDK, or the control plane — or delete it
-and let the next session seed it again.
+**These settings apply to the pages a repo already has, too.** Every session compares each seeded
+page's refresh policy against the config and re-syncs it when they differ, so a bank seeded before
+this default changed moves onto the hourly schedule by itself, and a page you retriggered by hand
+in the control plane is put back on the configured policy the next time an agent runs. The config
+file is the source of truth for these pages: to give one a different schedule, change
+`pageTriggerType`/`pageTriggerCron` (per bank, if it is only that repo) rather than editing the
+page. Only the fields this plugin states are touched — a page's `mode`, its excluded siblings and
+its minimum refresh interval are left exactly as they are.
 
 ### A bank you shape yourself — `manageBankConfig`
 

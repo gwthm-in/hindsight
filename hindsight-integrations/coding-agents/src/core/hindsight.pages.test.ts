@@ -5,12 +5,17 @@ import {
   KNOWLEDGE_LABELS,
   PAGE_MAX_TOKENS,
   pagesFor,
+  pageTriggerFor,
   RETAIN_STRATEGIES,
 } from "./missions";
 import { resolveConfig } from "./config";
 
 /** What a client built with `bank: "repo-a"` and no `project` seeds — the bank id is the fallback. */
 const PAGES = pagesFor("repo-a");
+
+/** The trigger a page on bank "repo-a" settles at under the default config — its hashed cron
+ *  already resolved, which is what the server would report back for it. */
+const settledTrigger = (name: string) => pageTriggerFor(buildPageTrigger(), "repo-a", name);
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -232,7 +237,9 @@ describe("HindsightClient.seedPages", () => {
             kind: "page",
             name: p.name,
             description: p.source_query,
-            trigger: { tags_match: buildPageTrigger().tags_match },
+            // The EFFECTIVE policy as the server reports it: the page's own resolved schedule,
+            // and the auto-refresh it is mutually exclusive with reported at its default.
+            trigger: { ...settledTrigger(p.name), refresh_after_consolidation: false },
           })),
         },
       },
@@ -278,7 +285,7 @@ describe("HindsightClient.seedPages", () => {
             kind: "page",
             name: p.name.toUpperCase(),
             description: p === drifted ? "an older wording of the query" : p.source_query,
-            trigger: { tags_match: buildPageTrigger().tags_match },
+            trigger: settledTrigger(p.name),
           })),
         },
       },
@@ -321,10 +328,77 @@ describe("HindsightClient.seedPages", () => {
 
     const patches = calls.filter((k) => k.method === "PATCH");
     expect(patches).toHaveLength(PAGES.length);
-    for (const patch of patches) {
+    for (const [i, patch] of patches.entries()) {
       // ONLY the trigger: sending `source_query` would schedule a full rebuild of every page on
-      // a bank whose question never changed.
-      expect(patch.body).toEqual({ trigger: buildPageTrigger() });
+      // a bank whose question never changed. The cron is the page's OWN resolved one — patching
+      // the literal `H * * * *` would reach the server as a cron it cannot parse.
+      expect(patch.body).toEqual({
+        trigger: pageTriggerFor(buildPageTrigger(), "repo-a", PAGES[i].name),
+      });
+    }
+  });
+
+  /**
+   * The whole point of re-syncing the refresh policy and not just `tags_match`: a bank seeded
+   * before the default became the hourly staggered schedule sits on `refresh_after_consolidation`
+   * — one LLM synthesis per page per consolidation — and nothing about its source query changed,
+   * so without this it would keep paying that forever (#3506).
+   */
+  it("migrates a bank still on the old auto-refresh default onto the schedule", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      {
+        match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"),
+        json: {
+          roots: PAGES.map((p, i) => ({
+            id: `kp-${i}`,
+            kind: "page",
+            name: p.name,
+            description: p.source_query,
+            trigger: { tags_match: "all", refresh_after_consolidation: true, refresh_cron: null },
+          })),
+        },
+      },
+    ]);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await c.seedPages();
+
+    const patches = calls.filter((k) => k.method === "PATCH");
+    expect(patches).toHaveLength(PAGES.length);
+    for (const [i, patch] of patches.entries()) {
+      expect(patch.body.trigger.refresh_cron).toBe(settledTrigger(PAGES[i].name).refresh_cron);
+      // Stating the cron is what clears the auto-refresh server-side; the two are exclusive.
+      expect(patch.body.trigger.refresh_after_consolidation).toBeUndefined();
+      expect(patch.body.source_query).toBeUndefined();
+    }
+  });
+
+  // "manual" is the one policy whose refresh field is falsy, so the server drops no counterpart:
+  // without an explicit null the page would keep firing on the cron it already had.
+  it("clears an existing schedule when the config asks for manual refreshes", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      {
+        match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"),
+        json: {
+          roots: PAGES.map((p, i) => ({
+            id: `kp-${i}`,
+            kind: "page",
+            name: p.name,
+            description: p.source_query,
+            trigger: { ...settledTrigger(p.name), refresh_after_consolidation: false },
+          })),
+        },
+      },
+    ]);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await c.seedPages(buildPageTrigger(resolveConfig({ pageTriggerType: "manual" })));
+
+    const patches = calls.filter((k) => k.method === "PATCH");
+    expect(patches).toHaveLength(PAGES.length);
+    for (const patch of patches) {
+      expect(patch.body.trigger.refresh_after_consolidation).toBe(false);
+      expect(patch.body.trigger.refresh_cron).toBeNull();
     }
   });
 
