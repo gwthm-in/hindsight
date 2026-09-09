@@ -5,6 +5,7 @@ import {
   buildPageTrigger,
   CODING_BANK_TEMPLATE,
   codingBankManifest,
+  DEFAULT_PAGE_TRIGGER_CRON,
   expandCronHash,
   KNOWLEDGE_LABELS,
   pageTriggerFor,
@@ -20,10 +21,10 @@ import {
  * the fact.
  */
 describe("buildPageTrigger", () => {
-  it("defaults to the auto-refresh policy every page shipped with", () => {
+  it("defaults to the hourly staggered schedule", () => {
     expect(buildPageTrigger()).toMatchObject({
       fact_types: PAGE_FACT_TYPES,
-      refresh_after_consolidation: true,
+      refresh_cron: DEFAULT_PAGE_TRIGGER_CRON,
     });
     expect(buildPageTrigger(resolveConfig({}))).toEqual(buildPageTrigger());
   });
@@ -158,25 +159,36 @@ describe("hashed cron fields", () => {
   });
 
   it("passes a trigger with no cron through untouched", () => {
-    const auto = buildPageTrigger(resolveConfig({}));
+    const auto = buildPageTrigger(resolveConfig({ pageTriggerType: "auto-refresh" }));
     expect(pageTriggerFor(auto, "repo-a", "Component map")).toBe(auto);
   });
 });
 
 describe("page trigger config resolution", () => {
-  it("keeps today's behaviour when nothing is configured", () => {
-    expect(resolveConfig({}).pageTriggerType).toBe("auto-refresh");
-    expect(resolveConfig({}).pageTriggerCron).toBeUndefined();
+  // The default: hourly, each page on its own hashed minute. Auto-refresh — one LLM synthesis per
+  // page per consolidation — is now opt-in.
+  it("schedules an unconfigured repo's pages hourly and staggered", () => {
+    expect(resolveConfig({}).pageTriggerType).toBe("cron");
+    expect(resolveConfig({}).pageTriggerCron).toBe(DEFAULT_PAGE_TRIGGER_CRON);
+    expect(DEFAULT_PAGE_TRIGGER_CRON).toBe("H * * * *");
+    const trigger = buildPageTrigger(resolveConfig({}));
+    expect(trigger.refresh_cron).toBe(DEFAULT_PAGE_TRIGGER_CRON);
+    expect(trigger.refresh_after_consolidation).toBeUndefined();
+    // And the `H` is resolved per page before it is sent — see "hashed cron fields" above.
+    expect(pageTriggerFor(trigger, "repo-a", "Component map").refresh_cron).toMatch(
+      /^(?:[0-9]|[1-5][0-9]) \* \* \* \*$/
+    );
   });
 
-  // The API rejects a cron trigger with no expression, so honouring this literally would fail page
-  // creation outright. Falling back to the default keeps pages working; "manual" is how you ask
-  // for no refreshes.
-  it("falls back to auto-refresh when cron is asked for without an expression", () => {
-    expect(resolveConfig({ pageTriggerType: "cron" }).pageTriggerType).toBe("auto-refresh");
-    expect(resolveConfig({ pageTriggerType: "cron", pageTriggerCron: "   " }).pageTriggerType).toBe(
-      "auto-refresh"
-    );
+  // The API rejects a cron trigger with no expression, so honouring an empty one literally would
+  // fail page creation outright. The default schedule stands in; "manual" is how you ask for no
+  // refreshes.
+  it("uses the default schedule when cron is asked for without an expression", () => {
+    for (const raw of [{}, { pageTriggerCron: "   " }] as const) {
+      const cfg = resolveConfig({ pageTriggerType: "cron", ...raw });
+      expect(cfg.pageTriggerType).toBe("cron");
+      expect(cfg.pageTriggerCron).toBe(DEFAULT_PAGE_TRIGGER_CRON);
+    }
   });
 
   /**
@@ -184,11 +196,11 @@ describe("page trigger config resolution", () => {
    * would reach the server verbatim and fail page creation with a parse error naming syntax this
    * package invented. Only the H fields are checked — ordinary cron syntax is the server's.
    */
-  it("falls back to auto-refresh on a malformed hashed field", () => {
+  it("falls back to the default schedule on a malformed hashed field", () => {
     for (const bad of ["H(9-3) * * * *", "H(0-99) * * * *", "H H", "Hx * * * *"]) {
-      expect(resolveConfig({ pageTriggerType: "cron", pageTriggerCron: bad }).pageTriggerType).toBe(
-        "auto-refresh"
-      );
+      const cfg = resolveConfig({ pageTriggerType: "cron", pageTriggerCron: bad });
+      expect(cfg.pageTriggerType).toBe("cron");
+      expect(cfg.pageTriggerCron).toBe(DEFAULT_PAGE_TRIGGER_CRON);
     }
   });
 
@@ -200,10 +212,17 @@ describe("page trigger config resolution", () => {
     }
   });
 
+  it("keeps auto-refresh available for a repo that opts into it", () => {
+    const cfg = resolveConfig({ pageTriggerType: "auto-refresh" });
+    expect(cfg.pageTriggerType).toBe("auto-refresh");
+    expect(cfg.pageTriggerCron).toBeUndefined();
+    expect(buildPageTrigger(cfg).refresh_after_consolidation).toBe(true);
+  });
+
   it("ignores a value that is not one of the three types", () => {
-    expect(resolveConfig({ pageTriggerType: "whenever" as never }).pageTriggerType).toBe(
-      "auto-refresh"
-    );
+    const cfg = resolveConfig({ pageTriggerType: "whenever" as never });
+    expect(cfg.pageTriggerType).toBe("cron");
+    expect(cfg.pageTriggerCron).toBe(DEFAULT_PAGE_TRIGGER_CRON);
   });
 });
 

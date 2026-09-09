@@ -185,7 +185,9 @@ describe("HindsightClient.seedPages", () => {
         /^knowledge:(feature-work|decision|convention|component|concept)$/
       );
       expect(post.body.max_tokens).toBe(PAGE_MAX_TOKENS);
-      expect(post.body.trigger.refresh_after_consolidation).toBe(true);
+      // The default schedule, with the page's own hashed minute already resolved.
+      expect(post.body.trigger.refresh_after_consolidation).toBeUndefined();
+      expect(post.body.trigger.refresh_cron).toMatch(/^(?:[0-9]|[1-5][0-9]) \* \* \* \*$/);
       // NOT the server's `all_strict` default for a tagged model: that excludes untagged
       // memories, and every observation this plugin's banks consolidate is untagged.
       expect(post.body.trigger.tags_match).toBe("all");

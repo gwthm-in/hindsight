@@ -320,6 +320,17 @@ const PAGE_TAGS_MATCH = "all" as const;
 /** A page synthesizes from all three tiers; the fact types are not a preference. */
 export const PAGE_FACT_TYPES = ["world", "experience", "observation"];
 
+/**
+ * The default schedule: once an hour, each page on its own hashed minute (see `H` below).
+ *
+ * Hourly rather than daily because a knowledge page a coding agent reads at the start of a session
+ * is worth little if it lags a day behind the repo; hourly rather than per-consolidation because a
+ * refresh costs one LLM synthesis per page, and a repo under active work consolidates far more
+ * often than once an hour. The server skips a tick that has nothing new to fold in, so an idle
+ * repo pays nothing for the schedule.
+ */
+export const DEFAULT_PAGE_TRIGGER_CRON = "H * * * *";
+
 /** The config fields that shape the trigger (a subset of Config — see core/config.ts). */
 export interface PageTriggerConfig {
   pageTriggerType?: "auto-refresh" | "cron" | "manual";
@@ -450,13 +461,14 @@ export function pageTriggerFor(trigger: PageTrigger, bank: string, page: string)
 /**
  * How this project's pages keep themselves current.
  *
- * WHEN is the only part of this that is a preference. `auto-refresh` — the default, and what every
- * page shipped with — keeps a living document, rebuilt whenever consolidation produced new
- * material: the most current setting and the most expensive, since a busy repo consolidates
- * constantly and each pass is an LLM synthesis per page (#3506). `cron` bounds that to a schedule
- * (the server skips a tick when nothing changed), `manual` refreshes only when something asks. A page is a mental model like any
- * other, so the scheduler picks it up either way (`mental_models_with_cron()` filters on nothing
- * but a non-empty `refresh_cron`).
+ * WHEN is the only part of this that is a preference. The default is `cron` on
+ * `DEFAULT_PAGE_TRIGGER_CRON` — hourly, each page on its own hashed minute: current within the
+ * hour, and bounded, since the server skips a tick when nothing changed. `auto-refresh`, which
+ * every page used to ship with, rebuilds whenever consolidation produced new material — the most
+ * current setting and by far the most expensive, since a busy repo consolidates constantly and
+ * each pass is an LLM synthesis per page (#3506). `manual` refreshes only when something asks. A
+ * page is a mental model like any other, so the scheduler picks it up either way
+ * (`mental_models_with_cron()` filters on nothing but a non-empty `refresh_cron`).
  *
  * HOW a page refreshes is deliberately NOT stated here. `create_knowledge_page` owns that
  * (`KNOWLEDGE_PAGE_DEFAULT_TRIGGER`: delta refresh, no sibling pages in the reflect loop) and
@@ -474,12 +486,14 @@ export function pageTriggerFor(trigger: PageTrigger, bank: string, page: string)
 export function buildPageTrigger(cfg: PageTriggerConfig = {}): PageTrigger {
   const base: PageTrigger = { fact_types: PAGE_FACT_TYPES, tags_match: PAGE_TAGS_MATCH };
   switch (cfg.pageTriggerType) {
-    case "cron":
-      return { ...base, refresh_cron: cfg.pageTriggerCron };
+    case "auto-refresh":
+      return { ...base, refresh_after_consolidation: true };
     case "manual":
       return { ...base, refresh_after_consolidation: false };
+    // "cron" and an unset type alike: the default schedule stands in for a missing expression, so
+    // a trigger built from a partial config is never a cron trigger with nothing to fire on.
     default:
-      return { ...base, refresh_after_consolidation: true };
+      return { ...base, refresh_cron: cfg.pageTriggerCron || DEFAULT_PAGE_TRIGGER_CRON };
   }
 }
 
