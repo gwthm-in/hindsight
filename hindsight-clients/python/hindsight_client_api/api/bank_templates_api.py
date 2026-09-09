@@ -886,3 +886,4 @@ class BankTemplatesApi:
             _request_auth=_request_auth
         )
 
+

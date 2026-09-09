@@ -4822,18 +4822,6 @@
             }
           }
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "description": "Bank template manifest",
-                "title": "Manifest",
-                "$ref": "#/components/schemas/BankTemplateManifest"
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -4852,6 +4840,18 @@
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "title": "Manifest",
+                "description": "Bank template manifest",
+                "$ref": "#/components/schemas/BankTemplateManifest"
               }
             }
           }
